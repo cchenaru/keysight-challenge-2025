@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include "dpc_common.hpp"
 #include <pcap.h>
+#include <chrono>
 
 // Constants
 const size_t BURST_SIZE = 32;
@@ -160,6 +161,8 @@ private:
 };
 
 int main(int argc, char* argv[]) {
+    auto overall_start = std::chrono::high_resolution_clock::now();
+
     // Check command line arguments
     std::string pcap_file = "../../src/capture2.pcap";
     if (argc > 1) {
@@ -190,7 +193,10 @@ int main(int argc, char* argv[]) {
             std::cerr << "Failed to open PCAP file. Exiting." << std::endl;
             return 1;
         }
-        std::cout << "OPENED FILE" << std::endl;
+
+        // Example: add timing around the flow graph activation and processing
+        auto processing_start = std::chrono::high_resolution_clock::now();
+
         // Input node: read packets from PCAP file
         tbb::flow::input_node<std::vector<Packet>> in_node{g,
             [&](tbb::flow_control& fc) -> std::vector<Packet> {
@@ -198,13 +204,13 @@ int main(int argc, char* argv[]) {
                 int nr_packets = pcap_reader.readPacketBurst(packets, BURST_SIZE);
                 
                 if (nr_packets == 0) {
-                    std::cout << "No more packets" << std::endl;
+                    // std::cout << "No more packets" << std::endl;
                     fc.stop();
                     return packets;
                 }
                 
                 stats.total_packets += nr_packets;
-                std::cout << "Read " << nr_packets << " packets" << std::endl;
+                // std::cout << "Read " << nr_packets << " packets" << std::endl;
                 return packets;
             }
         };
@@ -394,7 +400,7 @@ int main(int argc, char* argv[]) {
                 stats.tcp_packets  += acc.tcp;
                 stats.udp_packets  += acc.udp;
 
-                std::cout << "Packet inspection completed on GPU" << std::endl;
+                // std::cout << "Packet inspection completed on GPU" << std::endl;
                 return packets;
             }
         };
@@ -500,7 +506,7 @@ int main(int argc, char* argv[]) {
                     stats.routed_packets++;
                 }
                 
-                std::cout << "IPv4 routing completed on GPU for " << packet_count << " packets" << std::endl;
+                // std::cout << "IPv4 routing completed on GPU for " << packet_count << " packets" << std::endl;
                 
                 // Merge back the IPv4 packets with the original packet list
                 std::vector<Packet> result;
@@ -523,7 +529,7 @@ int main(int argc, char* argv[]) {
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return tbb::flow::continue_msg();
                 
-                std::cout << "Send node received " << packets.size() << " packets" << std::endl;
+                // std::cout << "Send node received " << packets.size() << " packets" << std::endl;
                 
                 // In a real implementation, we would lookup the routing table and send packets
                 // to the correct interface. For now, just simulate this.
@@ -562,6 +568,11 @@ int main(int argc, char* argv[]) {
         // Wait for completion
         g.wait_for_all();
         
+        // Print time elapsed
+        auto processing_end = std::chrono::high_resolution_clock::now();
+        auto processing_duration = std::chrono::duration_cast<std::chrono::milliseconds>(processing_end - processing_start).count();
+        std::cout << "Processing time: " << processing_duration << " ms" << std::endl;
+
         // Print statistics
         std::cout << "\nNetwork Statistics:" << std::endl;
         std::cout << "Total packets: " << stats.total_packets << std::endl;
