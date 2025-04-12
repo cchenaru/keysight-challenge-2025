@@ -7,6 +7,8 @@
 #include <tbb/blocked_range.h>
 #include <tbb/global_control.h>
 #include <tbb/flow_graph.h>
+#include <tbb/parallel_for.h>
+#include <tbb/parallel_reduce.h>
 #include <cstring>
 #include <unordered_map>
 #include "dpc_common.hpp"
@@ -313,7 +315,7 @@ int main(int argc, char* argv[]) {
                 auto host_udp  = buf_is_udp.get_host_access();
         
                 // Copy the protocol flags into the packet objects in parallel.
-                sycl::parallel_for(tbb::blocked_range<size_t>(0, packet_count),
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, packet_count),
                     [&](const tbb::blocked_range<size_t>& r) {
                         for (size_t i = r.begin(); i != r.end(); ++i) {
                             packets[i].is_ipv4 = host_ipv4[i];
