@@ -179,7 +179,7 @@ private:
 
 int main(int argc, char* argv[]) {
     // Check command line arguments
-    std::string pcap_file = "capture.pcap";
+    std::string pcap_file = "capture1.pcap";
     if (argc > 1) {
         pcap_file = argv[1];
     }
@@ -325,12 +325,13 @@ int main(int argc, char* argv[]) {
                 }).wait_and_throw();
                 
                 // Read back the results
-                is_ipv4 = buf_is_ipv4.get_host_access();
-                is_ipv6 = buf_is_ipv6.get_host_access();
-                is_arp = buf_is_arp.get_host_access();
-                is_icmp = buf_is_icmp.get_host_access();
-                is_tcp = buf_is_tcp.get_host_access();
-                is_udp = buf_is_udp.get_host_access();
+                // Read back the results
+                auto host_ipv4 = buf_is_ipv4.get_host_access();
+                auto host_ipv6 = buf_is_ipv6.get_host_access();
+                auto host_arp = buf_is_arp.get_host_access();
+                auto host_icmp = buf_is_icmp.get_host_access();
+                auto host_tcp = buf_is_tcp.get_host_access();
+                auto host_udp = buf_is_udp.get_host_access();
                 
                 // Update packet metadata and statistics
                 for (size_t i = 0; i < packet_count; i++) {
