@@ -42,7 +42,7 @@
             "editorPartMinWidth": 220,
             "titleBarHeight": 35,
             "activityBarWidth": 48,
-            "sideBarWidth": 442,
+            "sideBarWidth": 0,
             "auxiliarySideBarWidth": 0,
             "statusBarHeight": 22,
             "windowBorder": false
@@ -53,10 +53,10 @@
             "folder": "file:///root/keysight-challenge-2025",
             "backupPath": "/root/keysight-challenge-2025/Backups/c0ba1a2e195ac9ea5f7302db98bbe7e3",
             "uiState": {
-                "mode": 0,
-                "x": 995,
+                "mode": 1,
+                "x": 70,
                 "y": 27,
-                "width": 925,
+                "width": 903,
                 "height": 1053
             }
         },

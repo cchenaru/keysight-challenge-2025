@@ -25,9 +25,7 @@
 // Constants
 const size_t BURST_SIZE = 32;
 const size_t MAX_PACKET_SIZE = 1518;  // Maximum Ethernet packet size
-const size_t IP_OFFSET = 14;          // Offset to IP header in Ethernet frame
-const char* OUTPUT_PCAP_FILE = "result.pcap"; // Output PCAP file name
-const int SOCKET_PORT = 12345;         // Port for socket communication
+const size_t IP_OFFSET = 14;        // Offset to IP header in Ethernet frame
 
 
 // Network statistics
@@ -40,10 +38,7 @@ struct NetworkStats {
     std::atomic<uint64_t> udp_packets{0};
     std::atomic<uint64_t> total_packets{0};
     std::atomic<uint64_t> routed_packets{0};
-    std::atomic<uint64_t> saved_packets{0};    // Added for tracking saved packets
-    std::atomic<uint64_t> sent_packets{0};     // Added for tracking sent packets
 };
-
 // Define your Packet structure
 struct Packet {
     std::vector<uint8_t> data;
@@ -124,111 +119,107 @@ private:
     pcap_t* handle_;
 };
 
-// New PCAP Writer class to write packets to a PCAP file
 class PCAPWriter {
-public:
-    PCAPWriter(const std::string& filename) : filename_(filename), handle_(nullptr) {
-        // Open a PCAP file for writing
-        handle_ = pcap_open_dead(DLT_EN10MB, MAX_PACKET_SIZE);
-        if (!handle_) {
-            std::cerr << "Failed to create PCAP handle for writing" << std::endl;
-            return;
-        }
-
-        dumper_ = pcap_dump_open(handle_, filename.c_str());
-        if (!dumper_) {
-            std::cerr << "Failed to open PCAP file for writing: " 
-                      << pcap_geterr(handle_) << std::endl;
-            pcap_close(handle_);
-            handle_ = nullptr;
-            return;
-        }
-        
-        std::cout << "PCAP file opened for writing: " << filename << std::endl;
-    }
-
-    ~PCAPWriter() {
-        if (dumper_) {
-            pcap_dump_close(dumper_);
-        }
-        if (handle_) {
-            pcap_close(handle_);
-        }
-    }
+    public:
+        PCAPWriter(const std::string& filename) : filename_(filename), handle_(nullptr) {
+            // Open a PCAP file for writing
+            handle_ = pcap_open_dead(DLT_EN10MB, MAX_PACKET_SIZE);
+            if (!handle_) {
+                std::cerr << "Failed to create PCAP handle for writing" << std::endl;
+                return;
+            }
     
-    pcap_dumper_t* getDumper() const {
-        return dumper_;
-    }
-
-    // Write a packet to the PCAP file
-    bool writePacket(const Packet& packet) {
-        if (!dumper_) return false;
-
-        struct pcap_pkthdr header;
-        // Set current time
-        gettimeofday(&header.ts, nullptr);
-        header.caplen = packet.size;
-        header.len = packet.size;
-
-        pcap_dump((u_char*)dumper_, &header, packet.data.data());
-        return true;
-    }
-
-    bool isOpen() const {
-        return handle_ != nullptr && dumper_ != nullptr;
-    }
-
-private:
-    std::string filename_;
-    pcap_t* handle_;
-    pcap_dumper_t* dumper_;
-};
-
-// New SocketSender class to send packets through a socket
-class SocketSender {
-public:
-    SocketSender(int port = SOCKET_PORT) : port_(port), socket_fd_(-1) {
-        // Create a UDP socket
-        socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (socket_fd_ < 0) {
-            std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
-            return;
+            dumper_ = pcap_dump_open(handle_, filename.c_str());
+            if (!dumper_) {
+                std::cerr << "Failed to open PCAP file for writing: " 
+                          << pcap_geterr(handle_) << std::endl;
+                pcap_close(handle_);
+                handle_ = nullptr;
+                return;
+            }
+            
+            std::cout << "PCAP file opened for writing: " << filename << std::endl;
         }
-
-        // Set up the socket address
-        memset(&server_addr_, 0, sizeof(server_addr_));
-        server_addr_.sin_family = AF_INET;
-        server_addr_.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // localhost
-        server_addr_.sin_port = htons(port_);
-
-        std::cout << "Socket created for sending packets on port " << port_ << std::endl;
-    }
-
-    ~SocketSender() {
-        if (socket_fd_ >= 0) {
-            close(socket_fd_);
+    
+        ~PCAPWriter() {
+            if (dumper_) {
+                pcap_dump_close(dumper_);
+            }
+            if (handle_) {
+                pcap_close(handle_);
+            }
         }
-    }
-
-    // Send a packet through the socket
-    bool sendPacket(const Packet& packet) {
-        if (socket_fd_ < 0) return false;
-
-        ssize_t sent = sendto(socket_fd_, packet.data.data(), packet.size, 0,
-                             (struct sockaddr*)&server_addr_, sizeof(server_addr_));
-        
-        return (sent == static_cast<ssize_t>(packet.size));
-    }
-
-    bool isOpen() const {
-        return socket_fd_ >= 0;
-    }
-
-private:
-    int port_;
-    int socket_fd_;
-    struct sockaddr_in server_addr_;
-};
+    
+        // Write a packet to the PCAP file
+        bool writePacket(const Packet& packet) {
+            if (!dumper_) return false;
+    
+            struct pcap_pkthdr header;
+            // Set current time
+            gettimeofday(&header.ts, nullptr);
+            header.caplen = packet.size;
+            header.len = packet.size;
+    
+            pcap_dump((u_char*)dumper_, &header, packet.data.data());
+            return true;
+        }
+    
+        bool isOpen() const {
+            return handle_ != nullptr && dumper_ != nullptr;
+        }
+    
+    private:
+        std::string filename_;
+        pcap_t* handle_;
+        pcap_dumper_t* dumper_;
+    };
+    
+    // New SocketSender class to send packets through a socket
+    class SocketSender {
+    public:
+        SocketSender(int port = SOCKET_PORT) : port_(port), socket_fd_(-1) {
+            // Create a UDP socket
+            socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+            if (socket_fd_ < 0) {
+                std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
+                return;
+            }
+    
+            // Set up the socket address
+            memset(&server_addr_, 0, sizeof(server_addr_));
+            server_addr_.sin_family = AF_INET;
+            server_addr_.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // localhost
+            server_addr_.sin_port = htons(port_);
+    
+            std::cout << "Socket created for sending packets on port " << port_ << std::endl;
+        }
+    
+        ~SocketSender() {
+            if (socket_fd_ >= 0) {
+                close(socket_fd_);
+            }
+        }
+    
+        // Send a packet through the socket
+        bool sendPacket(const Packet& packet) {
+            if (socket_fd_ < 0) return false;
+    
+            ssize_t sent = sendto(socket_fd_, packet.data.data(), packet.size, 0,
+                                 (struct sockaddr*)&server_addr_, sizeof(server_addr_));
+            
+            return (sent == static_cast<ssize_t>(packet.size));
+        }
+    
+        bool isOpen() const {
+            return socket_fd_ >= 0;
+        }
+    
+    private:
+        int port_;
+        int socket_fd_;
+        struct sockaddr_in server_addr_;
+    };
+    
 
 // Routing table entry
 struct RoutingEntry {
@@ -277,7 +268,6 @@ private:
         return result;
     }
 };
-
 int main(int argc, char* argv[]) {
     // Record overall start time
     auto overall_start = std::chrono::high_resolution_clock::now();
@@ -291,20 +281,6 @@ int main(int argc, char* argv[]) {
     // Initialize network statistics and routing table
     NetworkStats stats;
     RoutingTable routing_table;
-    
-    // Initialize PCAP writer for output
-    PCAPWriter pcap_writer(OUTPUT_PCAP_FILE);
-    if (!pcap_writer.isOpen()) {
-        std::cerr << "Failed to open output PCAP file. Exiting." << std::endl;
-        return 1;
-    }
-    
-    // Initialize Socket sender
-    SocketSender socket_sender;
-    if (!socket_sender.isOpen()) {
-        std::cerr << "Failed to initialize socket sender. Exiting." << std::endl;
-        return 1;
-    }
     
     try {
         sycl::queue q;
@@ -628,9 +604,6 @@ int main(int argc, char* argv[]) {
 
                 // Retrieve and output the GPU profiling info for the routing kernel
                 uint64_t route_start = evt.get_profiling_info<sycl::info::event_profiling::command_start>();
-                uint64_t route_end   = evt.get_profiling_info<sycl::info::event_prof
-                // Retrieve and output the GPU profiling info for the routing kernel
-                uint64_t route_start = evt.get_profiling_info<sycl::info::event_profiling::command_start>();
                 uint64_t route_end   = evt.get_profiling_info<sycl::info::event_profiling::command_end>();
                 std::cout << "[routing_node] GPU Kernel Time: " 
                           << (route_end - route_start) * 1e-6 << " ms\n";
@@ -665,66 +638,28 @@ int main(int argc, char* argv[]) {
             }
         };
 
-        // Modified send node - now writes IPv4 packets to PCAP file and sends them through socket
+        // Send node - would normally send packets to network interfaces
         tbb::flow::function_node<std::vector<Packet>, tbb::flow::continue_msg> send_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return tbb::flow::continue_msg();
                 
-                // Process packets in parallel and collect IPv4 packets to save
-                std::vector<Packet> ipv4_packets_to_save;
-                std::mutex mutex;
-                
-                tbb::parallel_for(tbb::blocked_range<size_t>(0, packets.size()),
-                    [&](const tbb::blocked_range<size_t>& r) {
-                        std::vector<Packet> local_ipv4_packets;
+                for (const auto& packet : packets) {
+                    if (packet.is_ipv4 && packet.size >= IP_OFFSET + 20) {
+                        uint32_t dest_ip = (packet.data[IP_OFFSET + 16] << 24) | 
+                                          (packet.data[IP_OFFSET + 17] << 16) | 
+                                          (packet.data[IP_OFFSET + 18] << 8) | 
+                                           packet.data[IP_OFFSET + 19];
                         
-                        for (size_t i = r.begin(); i != r.end(); ++i) {
-                            if (packets[i].is_ipv4 && packets[i].size >= IP_OFFSET + 20) {
-                                uint32_t dest_ip = (packets[i].data[IP_OFFSET + 16] << 24) | 
-                                                  (packets[i].data[IP_OFFSET + 17] << 16) | 
-                                                  (packets[i].data[IP_OFFSET + 18] << 8) | 
-                                                   packets[i].data[IP_OFFSET + 19];
-                                
-                                int iface = routing_table.lookupRoute(dest_ip);
-                                
-                                if (iface >= 0) {
-                                    local_ipv4_packets.push_back(packets[i]);
-                                }
-                            }
-                        }
+                        int iface = routing_table.lookupRoute(dest_ip);
                         
-                        // Merge local results with global collection
-                        if (!local_ipv4_packets.empty()) {
-                            std::lock_guard<std::mutex> lock(mutex);
-                            ipv4_packets_to_save.insert(
-                                ipv4_packets_to_save.end(), 
-                                local_ipv4_packets.begin(), 
-                                local_ipv4_packets.end()
-                            );
-                        }
-                    });
-                
-                // Write IPv4 packets to PCAP file and send through socket
-                for (const auto& packet : ipv4_packets_to_save) {
-                    // Write to PCAP file
-                    if (pcap_writer.writePacket(packet)) {
-                        stats.saved_packets++;
-                    }
-                    
-                    // Send through socket
-                    if (socket_sender.sendPacket(packet)) {
-                        stats.sent_packets++;
+                        if (iface >= 0) {
+                            std::cout << "Packet routed to interface " << iface << std::endl;
+                        } 
+                        // else {
+                            // std::cout << "No route found for packet" << std::endl;
+                        // }
                     }
                 }
-                
-                // Flush the PCAP file periodically to ensure data is written
-                if (!ipv4_packets_to_save.empty()) {
-                    pcap_dump_flush(reinterpret_cast<pcap_dumper_t*>(pcap_writer.getDumper()));
-                }
-                
-                std::cout << "Processed batch of " << packets.size() 
-                          << " packets, saved " << ipv4_packets_to_save.size() 
-                          << " IPv4 packets" << std::endl;
                 
                 return tbb::flow::continue_msg();
             }
@@ -749,8 +684,6 @@ int main(int argc, char* argv[]) {
         std::cout << "TCP packets: " << stats.tcp_packets << std::endl;
         std::cout << "UDP packets: " << stats.udp_packets << std::endl;
         std::cout << "Routed packets: " << stats.routed_packets << std::endl;
-        std::cout << "Saved packets to PCAP: " << stats.saved_packets << std::endl;
-        std::cout << "Sent packets through socket: " << stats.sent_packets << std::endl;
         
     } catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << std::endl;
@@ -762,11 +695,5 @@ int main(int argc, char* argv[]) {
     std::cout << "Overall runtime: " << overall_duration << " ms" << std::endl;
     
     std::cout << "Application completed successfully" << std::endl;
-    std::cout << "PCAP file saved: " << OUTPUT_PCAP_FILE << std::endl;
-    std::cout << "To view the packets with tcpdump, run:" << std::endl;
-    std::cout << "  sudo tcpdump -r " << OUTPUT_PCAP_FILE << " -n" << std::endl;
-    std::cout << "To capture packets sent through socket, run in another terminal:" << std::endl;
-    std::cout << "  sudo tcpdump -i lo udp port " << SOCKET_PORT << " -nn -X" << std::endl;
-    
     return 0;
 }
