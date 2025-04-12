@@ -196,8 +196,9 @@ int main(int argc, char* argv[]) {
 
         // Example: add timing around the flow graph activation and processing
         auto processing_start = std::chrono::high_resolution_clock::now();
-
+        
         // Input node: read packets from PCAP file
+        auto input_start = std::chrono::high_resolution_clock::now();
         tbb::flow::input_node<std::vector<Packet>> in_node{g,
             [&](tbb::flow_control& fc) -> std::vector<Packet> {
                 std::vector<Packet> packets;
@@ -214,9 +215,11 @@ int main(int argc, char* argv[]) {
                 return packets;
             }
         };
-        
+        auto input_end = std::chrono::high_resolution_clock::now();
+        auto input_duration = std::chrono::duration_cast<std::chrono::milliseconds>(input_end - input_start).count();        
+
         // Packet inspection node
-        // Modified Packet Inspection Node using parallel_reduce
+        auto inspection_start = std::chrono::high_resolution_clock::now();
         tbb::flow::function_node<std::vector<Packet>, std::vector<Packet>> inspect_packet_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return packets;
@@ -404,9 +407,11 @@ int main(int argc, char* argv[]) {
                 return packets;
             }
         };
-
+        auto inspection_end = std::chrono::high_resolution_clock::now();
+        auto inspection_duration = std::chrono::duration_cast<std::chrono::milliseconds>(inspection_end - inspection_start).count();     
         
         // Routing node - only process IPv4 packets
+        auto routing_start = std::chrono::high_resolution_clock::now();
         tbb::flow::function_node<std::vector<Packet>, std::vector<Packet>> routing_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return packets;
@@ -523,8 +528,11 @@ int main(int argc, char* argv[]) {
                 return result;
             }
         };
+        auto routing_end = std::chrono::high_resolution_clock::now();
+        auto routing_duration = std::chrono::duration_cast<std::chrono::milliseconds>(routing_end - routing_start).count(); 
         
         // Send node - would normally send packets to network interfaces
+        auto send_start = std::chrono::high_resolution_clock::now();
         tbb::flow::function_node<std::vector<Packet>, tbb::flow::continue_msg> send_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return tbb::flow::continue_msg();
@@ -556,6 +564,8 @@ int main(int argc, char* argv[]) {
                 return tbb::flow::continue_msg();
             }
         };
+        auto send_end = std::chrono::high_resolution_clock::now();
+        auto send_duration = std::chrono::duration_cast<std::chrono::milliseconds>(send_end - send_start).count(); 
         
         // Connect the nodes
         tbb::flow::make_edge(in_node, inspect_packet_node);
@@ -572,6 +582,10 @@ int main(int argc, char* argv[]) {
         auto processing_end = std::chrono::high_resolution_clock::now();
         auto processing_duration = std::chrono::duration_cast<std::chrono::milliseconds>(processing_end - processing_start).count();
         std::cout << "Processing time: " << processing_duration << " ms" << std::endl;
+        std::cout << "Processing time: " << input_duration << " ms" << std::endl;
+        std::cout << "Processing time: " << inspection_duration << " ms" << std::endl;
+        std::cout << "Processing time: " << routing_duration << " ms" << std::endl;
+        std::cout << "Processing time: " << send_duration << " ms" << std::endl;
 
         // Print statistics
         std::cout << "\nNetwork Statistics:" << std::endl;
