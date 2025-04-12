@@ -4,6 +4,8 @@
 #include <string>
 #include <fstream>
 #include <sycl/sycl.hpp>
+#include <chrono>
+#include <sycl/sycl.hpp>
 #include <tbb/blocked_range.h>
 #include <tbb/global_control.h>
 #include <tbb/flow_graph.h>
@@ -13,7 +15,6 @@
 #include <unordered_map>
 #include "dpc_common.hpp"
 #include <pcap.h>
-#include <chrono>
 
 // Constants
 const size_t BURST_SIZE = 32;
@@ -159,25 +160,25 @@ private:
         return result;
     }
 };
-
 int main(int argc, char* argv[]) {
+    // Record overall start time
     auto overall_start = std::chrono::high_resolution_clock::now();
 
-    // Check command line arguments
+    // Check command line arguments and set up PCAP file
     std::string pcap_file = "../../src/capture2.pcap";
     if (argc > 1) {
         pcap_file = argv[1];
     }
     
-    // Initialize network statistics
+    // Initialize network statistics and routing table
     NetworkStats stats;
-    
-    // Initialize routing table
     RoutingTable routing_table;
     
     try {
         sycl::queue q;
-        std::cout << "Using device: " << q.get_device().get_info<sycl::info::device::name>() << std::endl;
+        std::cout << "Using device: " 
+                  << q.get_device().get_info<sycl::info::device::name>() 
+                  << std::endl;
         
         // Set number of threads
         int nth = 10; // number of threads
@@ -193,44 +194,35 @@ int main(int argc, char* argv[]) {
             std::cerr << "Failed to open PCAP file. Exiting." << std::endl;
             return 1;
         }
-
-        // Example: add timing around the flow graph activation and processing
-        auto processing_start = std::chrono::high_resolution_clock::now();
         
         // Input node: read packets from PCAP file
-        auto input_start = std::chrono::high_resolution_clock::now();
         tbb::flow::input_node<std::vector<Packet>> in_node{g,
             [&](tbb::flow_control& fc) -> std::vector<Packet> {
                 std::vector<Packet> packets;
                 int nr_packets = pcap_reader.readPacketBurst(packets, BURST_SIZE);
                 
                 if (nr_packets == 0) {
-                    // std::cout << "No more packets" << std::endl;
                     fc.stop();
                     return packets;
                 }
                 
                 stats.total_packets += nr_packets;
-                // std::cout << "Read " << nr_packets << " packets" << std::endl;
                 return packets;
             }
         };
-        auto input_end = std::chrono::high_resolution_clock::now();
-        auto input_duration = std::chrono::duration_cast<std::chrono::milliseconds>(input_end - input_start).count();        
 
-        // Packet inspection node
-        auto inspection_start = std::chrono::high_resolution_clock::now();
+        // Packet inspection node using SYCL profiling on GPU
         tbb::flow::function_node<std::vector<Packet>, std::vector<Packet>> inspect_packet_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return packets;
 
-                // Create GPU buffers
-                sycl::queue gpu_queue(sycl::default_selector_v, dpc_common::exception_handler);
-                // std::cout << "Selected GPU Device: " 
-                //         << gpu_queue.get_device().get_info<sycl::info::device::name>() << "\n";
+                // Create a GPU queue with profiling enabled
+                sycl::property_list props{sycl::property::queue::enable_profiling()};
+                sycl::queue gpu_queue(sycl::default_selector_v, 
+                                      dpc_common::exception_handler, props);
 
                 size_t packet_count = packets.size();
-
+                
                 // Create a flat buffer for packet data and packet sizes
                 std::vector<uint8_t> packet_data_flat;
                 std::vector<size_t> packet_sizes(packet_count);
@@ -270,8 +262,8 @@ int main(int argc, char* argv[]) {
                 sycl::buffer<uint8_t> buf_is_tcp(is_tcp.data(), is_tcp.size());
                 sycl::buffer<uint8_t> buf_is_udp(is_udp.data(), is_udp.size());
 
-                // Submit GPU kernel for packet inspection
-                gpu_queue.submit([&](sycl::handler& h) {
+                // Submit GPU kernel for packet inspection with profiling
+                sycl::event evt = gpu_queue.submit([&](sycl::handler& h) {
                     auto acc_packet_data = buf_packet_data.get_access<sycl::access::mode::read>(h);
                     auto acc_packet_sizes = buf_packet_sizes.get_access<sycl::access::mode::read>(h);
                     auto acc_packet_offsets = buf_packet_offsets.get_access<sycl::access::mode::read>(h);
@@ -314,7 +306,14 @@ int main(int argc, char* argv[]) {
                             }
                         }
                     });
-                }).wait_and_throw();
+                });
+                evt.wait_and_throw();
+
+                // Retrieve profiling info for the inspection kernel
+                uint64_t inspect_start = evt.get_profiling_info<sycl::info::event_profiling::command_start>();
+                uint64_t inspect_end   = evt.get_profiling_info<sycl::info::event_profiling::command_end>();
+                std::cout << "[inspect_packet_node] GPU Kernel Time: " 
+                          << (inspect_end - inspect_start) * 1e-6 << " ms\n";
 
                 // Read back the results from SYCL buffers
                 auto host_ipv4 = buf_is_ipv4.get_host_access();
@@ -356,18 +355,18 @@ int main(int argc, char* argv[]) {
                     const std::vector<uint8_t>& host_udp;
 
                     StatsAccumulator(const std::vector<uint8_t>& h_ipv4,
-                                    const std::vector<uint8_t>& h_ipv6,
-                                    const std::vector<uint8_t>& h_arp,
-                                    const std::vector<uint8_t>& h_icmp,
-                                    const std::vector<uint8_t>& h_tcp,
-                                    const std::vector<uint8_t>& h_udp)
+                                     const std::vector<uint8_t>& h_ipv6,
+                                     const std::vector<uint8_t>& h_arp,
+                                     const std::vector<uint8_t>& h_icmp,
+                                     const std::vector<uint8_t>& h_tcp,
+                                     const std::vector<uint8_t>& h_udp)
                         : host_ipv4(h_ipv4), host_ipv6(h_ipv6), host_arp(h_arp),
-                        host_icmp(h_icmp), host_tcp(h_tcp), host_udp(h_udp) {}
+                          host_icmp(h_icmp), host_tcp(h_tcp), host_udp(h_udp) {}
 
                     StatsAccumulator(StatsAccumulator& other, tbb::split)
                         : host_ipv4(other.host_ipv4), host_ipv6(other.host_ipv6),
-                        host_arp(other.host_arp), host_icmp(other.host_icmp),
-                        host_tcp(other.host_tcp), host_udp(other.host_udp) {}
+                          host_arp(other.host_arp), host_icmp(other.host_icmp),
+                          host_tcp(other.host_tcp), host_udp(other.host_udp) {}
 
                     void operator()(const tbb::blocked_range<size_t>& r) {
                         for (size_t i = r.begin(); i != r.end(); ++i) {
@@ -392,7 +391,7 @@ int main(int argc, char* argv[]) {
 
                 // Run parallel_reduce over the packet indices.
                 StatsAccumulator acc(host_ipv4_vec, host_ipv6_vec, host_arp_vec,
-                                    host_icmp_vec, host_tcp_vec, host_udp_vec);
+                                     host_icmp_vec, host_tcp_vec, host_udp_vec);
                 tbb::parallel_reduce(tbb::blocked_range<size_t>(0, packet_count), acc);
 
                 // Update the global (atomic) network statistics.
@@ -403,15 +402,11 @@ int main(int argc, char* argv[]) {
                 stats.tcp_packets  += acc.tcp;
                 stats.udp_packets  += acc.udp;
 
-                // std::cout << "Packet inspection completed on GPU" << std::endl;
                 return packets;
             }
         };
-        auto inspection_end = std::chrono::high_resolution_clock::now();
-        auto inspection_duration = std::chrono::duration_cast<std::chrono::milliseconds>(inspection_end - inspection_start).count();     
-        
-        // Routing node - only process IPv4 packets
-        auto routing_start = std::chrono::high_resolution_clock::now();
+
+        // Routing node - process only IPv4 packets with GPU kernel profiling
         tbb::flow::function_node<std::vector<Packet>, std::vector<Packet>> routing_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return packets;
@@ -427,7 +422,10 @@ int main(int argc, char* argv[]) {
                 if (ipv4_packets.empty()) return packets;
                 
                 // Process IPv4 packets on GPU
-                sycl::queue gpu_queue(sycl::default_selector_v);
+                // Create a GPU queue with profiling enabled
+                sycl::property_list props{sycl::property::queue::enable_profiling()};
+                sycl::queue gpu_queue(sycl::default_selector_v, props);
+                
                 size_t packet_count = ipv4_packets.size();
                 
                 // Flatten packet data for GPU processing
@@ -452,8 +450,8 @@ int main(int argc, char* argv[]) {
                 sycl::buffer<size_t> buf_packet_sizes(packet_sizes.data(), packet_sizes.size());
                 sycl::buffer<size_t> buf_packet_offsets(packet_offsets.data(), packet_offsets.size());
                 
-                // Submit GPU kernel for packet routing
-                gpu_queue.submit([&](sycl::handler& h) {
+                // Submit GPU kernel for packet routing with profiling
+                sycl::event evt = gpu_queue.submit([&](sycl::handler& h) {
                     auto acc_packet_data = buf_packet_data.get_access<sycl::access::mode::read_write>(h);
                     auto acc_packet_sizes = buf_packet_sizes.get_access<sycl::access::mode::read>(h);
                     auto acc_packet_offsets = buf_packet_offsets.get_access<sycl::access::mode::read>(h);
@@ -482,7 +480,6 @@ int main(int argc, char* argv[]) {
                                                 acc_packet_data[ip_header_start + i + 1];
                                 checksum += word;
                             }
-
                             // Fold 32-bit sum to 16 bits and take one's complement
                             while (checksum >> 16) {
                                 checksum = (checksum & 0xFFFF) + (checksum >> 16);
@@ -494,8 +491,15 @@ int main(int argc, char* argv[]) {
                             acc_packet_data[ip_header_start + 11] = static_cast<uint8_t>(checksum & 0xFF);
                         }
                     });
-                }).wait_and_throw();
-                
+                });
+                evt.wait_and_throw();
+
+                // Retrieve and output the GPU profiling info for the routing kernel
+                uint64_t route_start = evt.get_profiling_info<sycl::info::event_profiling::command_start>();
+                uint64_t route_end   = evt.get_profiling_info<sycl::info::event_profiling::command_end>();
+                std::cout << "[routing_node] GPU Kernel Time: " 
+                          << (route_end - route_start) * 1e-6 << " ms\n";
+
                 // Copy back the modified data to the original packets
                 auto host_data = buf_packet_data.get_host_access();
                 
@@ -511,12 +515,9 @@ int main(int argc, char* argv[]) {
                     stats.routed_packets++;
                 }
                 
-                // std::cout << "IPv4 routing completed on GPU for " << packet_count << " packets" << std::endl;
-                
                 // Merge back the IPv4 packets with the original packet list
                 std::vector<Packet> result;
                 size_t ipv4_idx = 0;
-                
                 for (const auto& packet : packets) {
                     if (packet.is_ipv4 && ipv4_idx < ipv4_packets.size()) {
                         result.push_back(ipv4_packets[ipv4_idx++]);
@@ -528,32 +529,22 @@ int main(int argc, char* argv[]) {
                 return result;
             }
         };
-        auto routing_end = std::chrono::high_resolution_clock::now();
-        auto routing_duration = std::chrono::duration_cast<std::chrono::milliseconds>(routing_end - routing_start).count(); 
-        
+
         // Send node - would normally send packets to network interfaces
-        auto send_start = std::chrono::high_resolution_clock::now();
         tbb::flow::function_node<std::vector<Packet>, tbb::flow::continue_msg> send_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return tbb::flow::continue_msg();
                 
-                // std::cout << "Send node received " << packets.size() << " packets" << std::endl;
-                
-                // In a real implementation, we would lookup the routing table and send packets
-                // to the correct interface. For now, just simulate this.
                 for (const auto& packet : packets) {
                     if (packet.is_ipv4 && packet.size >= IP_OFFSET + 20) {
-                        // Extract destination IP
                         uint32_t dest_ip = (packet.data[IP_OFFSET + 16] << 24) | 
                                           (packet.data[IP_OFFSET + 17] << 16) | 
                                           (packet.data[IP_OFFSET + 18] << 8) | 
                                            packet.data[IP_OFFSET + 19];
                         
-                        // Lookup routing table
                         int iface = routing_table.lookupRoute(dest_ip);
                         
                         if (iface >= 0) {
-                            // In a real implementation, we would send the packet to the correct interface
                             std::cout << "Packet routed to interface " << iface << std::endl;
                         } else {
                             std::cout << "No route found for packet" << std::endl;
@@ -564,29 +555,16 @@ int main(int argc, char* argv[]) {
                 return tbb::flow::continue_msg();
             }
         };
-        auto send_end = std::chrono::high_resolution_clock::now();
-        auto send_duration = std::chrono::duration_cast<std::chrono::milliseconds>(send_end - send_start).count(); 
         
-        // Connect the nodes
+        // Connect the nodes together
         tbb::flow::make_edge(in_node, inspect_packet_node);
         tbb::flow::make_edge(inspect_packet_node, routing_node);
         tbb::flow::make_edge(routing_node, send_node);
         
-        // Activate the input node
+        // Activate the input node and wait for the entire TBB flow graph to complete.
         in_node.activate();
-        
-        // Wait for completion
         g.wait_for_all();
         
-        // Print time elapsed
-        auto processing_end = std::chrono::high_resolution_clock::now();
-        auto processing_duration = std::chrono::duration_cast<std::chrono::milliseconds>(processing_end - processing_start).count();
-        std::cout << "Processing time: " << processing_duration << " ms" << std::endl;
-        std::cout << "Processing time: " << input_duration << " ms" << std::endl;
-        std::cout << "Processing time: " << inspection_duration << " ms" << std::endl;
-        std::cout << "Processing time: " << routing_duration << " ms" << std::endl;
-        std::cout << "Processing time: " << send_duration << " ms" << std::endl;
-
         // Print statistics
         std::cout << "\nNetwork Statistics:" << std::endl;
         std::cout << "Total packets: " << stats.total_packets << std::endl;
@@ -602,6 +580,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Exception caught: " << e.what() << std::endl;
         return 1;
     }
+    
+    auto overall_end = std::chrono::high_resolution_clock::now();
+    auto overall_duration = std::chrono::duration_cast<std::chrono::milliseconds>(overall_end - overall_start).count();
+    std::cout << "Overall runtime: " << overall_duration << " ms" << std::endl;
     
     std::cout << "Application completed successfully" << std::endl;
     return 0;
