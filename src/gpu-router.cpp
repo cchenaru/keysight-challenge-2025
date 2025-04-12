@@ -26,7 +26,8 @@
 const size_t BURST_SIZE = 32;
 const size_t MAX_PACKET_SIZE = 1518;  // Maximum Ethernet packet size
 const size_t IP_OFFSET = 14;        // Offset to IP header in Ethernet frame
-
+const char* OUTPUT_PCAP_FILE = "result.pcap"; // Output PCAP file name
+const int SOCKET_PORT = 12345;         // Port for socket communication
 
 // Network statistics
 struct NetworkStats {
