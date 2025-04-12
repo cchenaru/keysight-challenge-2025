@@ -446,20 +446,41 @@ int main(int argc, char* argv[]) {
                     auto acc_packet_data = buf_packet_data.get_access<sycl::access::mode::read_write>(h);
                     auto acc_packet_sizes = buf_packet_sizes.get_access<sycl::access::mode::read>(h);
                     auto acc_packet_offsets = buf_packet_offsets.get_access<sycl::access::mode::read>(h);
-                    
+
                     h.parallel_for(packet_count, [=](auto idx) {
                         size_t offset = acc_packet_offsets[idx];
                         size_t size = acc_packet_sizes[idx];
-                        
-                        if (size >= IP_OFFSET + 20) {  // Make sure we have enough data for IPv4 header
-                            // Modify the destination IP address (add 1 to each byte)
-                            // IPv4 destination address is at offset 30 in the Ethernet frame
-                            acc_packet_data[offset + IP_OFFSET + 16]++;
-                            acc_packet_data[offset + IP_OFFSET + 17]++;
-                            acc_packet_data[offset + IP_OFFSET + 18]++;
-                            acc_packet_data[offset + IP_OFFSET + 19]++;
-                            
-                            // NOTE: In a real implementation, we would also need to recalculate the IPv4 checksum
+
+                        if (size >= IP_OFFSET + 20) { // IPv4 header is 20 bytes minimum
+                            size_t ip_header_start = offset + IP_OFFSET;
+
+                            // Modify destination IP address (bytes 16-19 of IP header)
+                            acc_packet_data[ip_header_start + 16]++;
+                            acc_packet_data[ip_header_start + 17]++;
+                            acc_packet_data[ip_header_start + 18]++;
+                            acc_packet_data[ip_header_start + 19]++;
+
+                            // Zero the checksum before calculation (bytes 10-11 of IP header)
+                            acc_packet_data[ip_header_start + 10] = 0;
+                            acc_packet_data[ip_header_start + 11] = 0;
+
+                            // Calculate checksum over the 20-byte header
+                            uint32_t checksum = 0;
+                            for (int i = 0; i < 20; i += 2) {
+                                uint16_t word = (acc_packet_data[ip_header_start + i] << 8) |
+                                                acc_packet_data[ip_header_start + i + 1];
+                                checksum += word;
+                            }
+
+                            // Fold 32-bit sum to 16 bits and take one's complement
+                            while (checksum >> 16) {
+                                checksum = (checksum & 0xFFFF) + (checksum >> 16);
+                            }
+                            checksum = ~checksum;
+
+                            // Store checksum back to IP header
+                            acc_packet_data[ip_header_start + 10] = static_cast<uint8_t>(checksum >> 8);
+                            acc_packet_data[ip_header_start + 11] = static_cast<uint8_t>(checksum & 0xFF);
                         }
                     });
                 }).wait_and_throw();
