@@ -283,6 +283,20 @@ int main(int argc, char* argv[]) {
     NetworkStats stats;
     RoutingTable routing_table;
     
+    // Initialize PCAP writer for output
+    PCAPWriter pcap_writer(OUTPUT_PCAP_FILE);
+    if (!pcap_writer.isOpen()) {
+        std::cerr << "Failed to open output PCAP file. Exiting." << std::endl;
+        return 1;
+    }
+    
+    // Initialize Socket sender
+    SocketSender socket_sender;
+    if (!socket_sender.isOpen()) {
+        std::cerr << "Failed to initialize socket sender. Exiting." << std::endl;
+        return 1;
+    }
+
     try {
         sycl::queue q;
         std::cout << "Using device: " 
@@ -644,23 +658,61 @@ int main(int argc, char* argv[]) {
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return tbb::flow::continue_msg();
                 
-                for (const auto& packet : packets) {
-                    if (packet.is_ipv4 && packet.size >= IP_OFFSET + 20) {
-                        uint32_t dest_ip = (packet.data[IP_OFFSET + 16] << 24) | 
-                                          (packet.data[IP_OFFSET + 17] << 16) | 
-                                          (packet.data[IP_OFFSET + 18] << 8) | 
-                                           packet.data[IP_OFFSET + 19];
+                // Process packets in parallel and collect IPv4 packets to save
+                std::vector<Packet> ipv4_packets_to_save;
+                std::mutex mutex;
+                
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, packets.size()),
+                    [&](const tbb::blocked_range<size_t>& r) {
+                        std::vector<Packet> local_ipv4_packets;
                         
-                        int iface = routing_table.lookupRoute(dest_ip);
+                        for (size_t i = r.begin(); i != r.end(); ++i) {
+                            if (packets[i].is_ipv4 && packets[i].size >= IP_OFFSET + 20) {
+                                uint32_t dest_ip = (packets[i].data[IP_OFFSET + 16] << 24) | 
+                                                  (packets[i].data[IP_OFFSET + 17] << 16) | 
+                                                  (packets[i].data[IP_OFFSET + 18] << 8) | 
+                                                   packets[i].data[IP_OFFSET + 19];
+                                
+                                int iface = routing_table.lookupRoute(dest_ip);
+                                
+                                if (iface >= 0) {
+                                    local_ipv4_packets.push_back(packets[i]);
+                                }
+                            }
+                        }
                         
-                        if (iface >= 0) {
-                            std::cout << "Packet routed to interface " << iface << std::endl;
-                        } 
-                        // else {
-                            // std::cout << "No route found for packet" << std::endl;
-                        // }
+                        // Merge local results with global collection
+                        if (!local_ipv4_packets.empty()) {
+                            std::lock_guard<std::mutex> lock(mutex);
+                            ipv4_packets_to_save.insert(
+                                ipv4_packets_to_save.end(), 
+                                local_ipv4_packets.begin(), 
+                                local_ipv4_packets.end()
+                            );
+                        }
+                    });
+                
+                // Write IPv4 packets to PCAP file and send through socket
+                for (const auto& packet : ipv4_packets_to_save) {
+                    // Write to PCAP file
+                    if (pcap_writer.writePacket(packet)) {
+                        stats.saved_packets++;
+                    }
+                    
+                    // Send through socket
+                    if (socket_sender.sendPacket(packet)) {
+                        stats.sent_packets++;
                     }
                 }
+                
+                // Flush the PCAP file periodically to ensure data is written
+                if (!ipv4_packets_to_save.empty()) {
+                    pcap_dump_flush(reinterpret_cast<pcap_dumper_t*>(pcap_writer.getDumper()));
+                }
+                
+                std::cout << "Processed batch of " << packets.size() 
+                          << " packets, saved " << ipv4_packets_to_save.size() 
+                          << " IPv4 packets" << std::endl;
                 
                 return tbb::flow::continue_msg();
             }
@@ -685,7 +737,10 @@ int main(int argc, char* argv[]) {
         std::cout << "TCP packets: " << stats.tcp_packets << std::endl;
         std::cout << "UDP packets: " << stats.udp_packets << std::endl;
         std::cout << "Routed packets: " << stats.routed_packets << std::endl;
-        
+        std::cout << "Saved packets to PCAP: " << stats.saved_packets << std::endl;
+        std::cout << "Sent packets through socket: " << stats.sent_packets << std::endl;
+
+
     } catch (const std::exception& e) {
         std::cerr << "Exception caught: " << e.what() << std::endl;
         return 1;
