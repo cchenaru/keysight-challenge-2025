@@ -39,6 +39,8 @@ struct NetworkStats {
     std::atomic<uint64_t> udp_packets{0};
     std::atomic<uint64_t> total_packets{0};
     std::atomic<uint64_t> routed_packets{0};
+    std::atomic<uint64_t> saved_packets{0};    // Added for tracking saved packets
+    std::atomic<uint64_t> sent_packets{0};     // Added for tracking sent packets
 };
 // Define your Packet structure
 struct Packet {
@@ -524,6 +526,7 @@ int main(int argc, char* argv[]) {
                 stats.icmp_packets += acc.icmp;
                 stats.tcp_packets  += acc.tcp;
                 stats.udp_packets  += acc.udp;
+
 
                 return packets;
             }
