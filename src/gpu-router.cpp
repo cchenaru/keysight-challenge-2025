@@ -161,7 +161,7 @@ private:
 
 int main(int argc, char* argv[]) {
     // Check command line arguments
-    std::string pcap_file = "../../src/capture3.pcap";
+    std::string pcap_file = "../../src/capture2.pcap";
     if (argc > 1) {
         pcap_file = argv[1];
     }
