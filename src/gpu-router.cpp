@@ -546,9 +546,10 @@ int main(int argc, char* argv[]) {
                         
                         if (iface >= 0) {
                             std::cout << "Packet routed to interface " << iface << std::endl;
-                        } else {
-                            std::cout << "No route found for packet" << std::endl;
-                        }
+                        } 
+                        // else {
+                            // std::cout << "No route found for packet" << std::endl;
+                        // }
                     }
                 }
                 
