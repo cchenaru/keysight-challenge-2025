@@ -15,3 +15,8 @@
 2025-04-12 12:03:06.586 [info] ExtensionService#_doActivateExtension vscode.extension-editing, startup: false, activationEvent: 'onLanguage:markdown'
 2025-04-12 12:03:06.602 [info] ExtensionService#_doActivateExtension vscode.markdown-language-features, startup: false, activationEvent: 'onLanguage:markdown'
 2025-04-12 12:03:07.482 [info] ExtensionService#_doActivateExtension vscode.markdown-math, startup: false, activationEvent: 'api', root cause: vscode.markdown-language-features
+2025-04-12 12:21:01.224 [warning] Illegal argument: TextEditor(vs.editor.ICodeEditor:4,$model22)
+2025-04-12 12:21:01.225 [warning] Illegal argument: TextEditor(vs.editor.ICodeEditor:4,$model22)
+2025-04-12 12:21:01.225 [warning] Illegal argument: TextEditor(vs.editor.ICodeEditor:4,$model22)
+2025-04-12 12:21:01.225 [warning] Illegal argument: TextEditor(vs.editor.ICodeEditor:4,$model22)
+2025-04-12 12:21:01.226 [warning] Illegal argument: TextEditor(vs.editor.ICodeEditor:4,$model22)

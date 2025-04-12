@@ -1,0 +1,6 @@
+/root/keysight-challenge-2025/build/CMakeFiles/edit_cache.dir
+/root/keysight-challenge-2025/build/CMakeFiles/rebuild_cache.dir
+/root/keysight-challenge-2025/build/src/CMakeFiles/gpu-router.dir
+/root/keysight-challenge-2025/build/src/CMakeFiles/run.dir
+/root/keysight-challenge-2025/build/src/CMakeFiles/edit_cache.dir
+/root/keysight-challenge-2025/build/src/CMakeFiles/rebuild_cache.dir

@@ -6,3 +6,5 @@
 2025-04-12 11:26:52.682 [info] Settings Sync: Account status changed from uninitialized to unavailable
 2025-04-12 11:26:54.357 [info] [perf] Render performance baseline is 28ms
 2025-04-12 11:27:19.512 [info] [Extensions]: Checking for updates. Reason: Product update
+2025-04-12 12:20:27.092 [error] An unknown error occurred. Please consult the log for more details.: EntryNotFound (FileSystemError): 
+	at l.readFile (/usr/share/code/resources/app/extensions/git/dist/main.js:2:451691)
