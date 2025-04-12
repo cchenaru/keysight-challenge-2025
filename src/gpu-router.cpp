@@ -313,7 +313,7 @@ int main(int argc, char* argv[]) {
                 auto host_udp  = buf_is_udp.get_host_access();
         
                 // Copy the protocol flags into the packet objects in parallel.
-                tbb::parallel_for(tbb::blocked_range<size_t>(0, packet_count),
+                sycl::parallel_for(tbb::blocked_range<size_t>(0, packet_count),
                     [&](const tbb::blocked_range<size_t>& r) {
                         for (size_t i = r.begin(); i != r.end(); ++i) {
                             packets[i].is_ipv4 = host_ipv4[i];
