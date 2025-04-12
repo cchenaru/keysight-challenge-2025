@@ -211,26 +211,25 @@ int main(int argc, char* argv[]) {
         tbb::flow::function_node<std::vector<Packet>, std::vector<Packet>> inspect_packet_node{
             g, tbb::flow::unlimited, [&](std::vector<Packet> packets) {
                 if (packets.empty()) return packets;
-                
+        
                 // Create GPU buffers
                 sycl::queue gpu_queue(sycl::default_selector_v, dpc_common::exception_handler);
-                std::cout << "Selected GPU Device: " << 
-                    gpu_queue.get_device().get_info<sycl::info::device::name>() << "\n";
-                
+                std::cout << "Selected GPU Device: " 
+                          << gpu_queue.get_device().get_info<sycl::info::device::name>() << "\n";
+        
                 size_t packet_count = packets.size();
-                
-                // Create a SYCL buffer for all packets
+        
+                // Create a flat buffer for packet data and packet sizes
                 std::vector<uint8_t> packet_data_flat;
                 std::vector<size_t> packet_sizes(packet_count);
-                
-                // Flatten packet data for GPU processing
+        
                 for (size_t i = 0; i < packet_count; i++) {
                     packet_sizes[i] = packets[i].size;
-                    for (size_t j = 0; j < packets[i].size; j++) {
-                        packet_data_flat.push_back(packets[i].data[j]);
-                    }
+                    packet_data_flat.insert(packet_data_flat.end(),
+                                            packets[i].data.begin(),
+                                            packets[i].data.begin() + packets[i].size);
                 }
-                
+        
                 // Calculate offsets for each packet in the flat array
                 std::vector<size_t> packet_offsets(packet_count);
                 size_t offset = 0;
@@ -238,12 +237,12 @@ int main(int argc, char* argv[]) {
                     packet_offsets[i] = offset;
                     offset += packet_sizes[i];
                 }
-                
+        
                 // Create SYCL buffers
                 sycl::buffer<uint8_t> buf_packet_data(packet_data_flat.data(), packet_data_flat.size());
                 sycl::buffer<size_t> buf_packet_sizes(packet_sizes.data(), packet_sizes.size());
                 sycl::buffer<size_t> buf_packet_offsets(packet_offsets.data(), packet_offsets.size());
-                
+        
                 // Buffers for packet type flags
                 std::vector<uint8_t> is_ipv4(packet_count, 0);
                 std::vector<uint8_t> is_ipv6(packet_count, 0);
@@ -251,18 +250,18 @@ int main(int argc, char* argv[]) {
                 std::vector<uint8_t> is_icmp(packet_count, 0);
                 std::vector<uint8_t> is_tcp(packet_count, 0);
                 std::vector<uint8_t> is_udp(packet_count, 0);
-                
+        
                 sycl::buffer<uint8_t> buf_is_ipv4(is_ipv4.data(), is_ipv4.size());
                 sycl::buffer<uint8_t> buf_is_ipv6(is_ipv6.data(), is_ipv6.size());
                 sycl::buffer<uint8_t> buf_is_arp(is_arp.data(), is_arp.size());
                 sycl::buffer<uint8_t> buf_is_icmp(is_icmp.data(), is_icmp.size());
                 sycl::buffer<uint8_t> buf_is_tcp(is_tcp.data(), is_tcp.size());
                 sycl::buffer<uint8_t> buf_is_udp(is_udp.data(), is_udp.size());
-                
+        
                 // Submit GPU kernel for packet inspection
                 gpu_queue.submit([&](sycl::handler& h) {
-                    auto acc_packet_data = buf_packet_data.get_access<sycl::access::mode::read_write>(h);
-                    auto acc_packet_sizes = buf_packet_sizes.get_access<sycl::access::mode::read_write>(h);
+                    auto acc_packet_data = buf_packet_data.get_access<sycl::access::mode::read>(h);
+                    auto acc_packet_sizes = buf_packet_sizes.get_access<sycl::access::mode::read>(h);
                     auto acc_packet_offsets = buf_packet_offsets.get_access<sycl::access::mode::read>(h);
                     auto acc_is_ipv4 = buf_is_ipv4.get_access<sycl::access::mode::write>(h);
                     auto acc_is_ipv6 = buf_is_ipv6.get_access<sycl::access::mode::write>(h);
@@ -270,49 +269,33 @@ int main(int argc, char* argv[]) {
                     auto acc_is_icmp = buf_is_icmp.get_access<sycl::access::mode::write>(h);
                     auto acc_is_tcp = buf_is_tcp.get_access<sycl::access::mode::write>(h);
                     auto acc_is_udp = buf_is_udp.get_access<sycl::access::mode::write>(h);
-                    
+        
                     h.parallel_for(packet_count, [=](auto idx) {
                         size_t offset = acc_packet_offsets[idx];
                         size_t size = acc_packet_sizes[idx];
-                        
+        
                         // Need at least 14 bytes for Ethernet header
                         if (size >= 14) {
                             // Check Ethernet type (bytes 12-13)
-                            // uint16_t eth_type = (acc_packet_data[offset + 12] << 8) | acc_packet_data[offset + 13];
                             uint8_t hi = acc_packet_data[offset + 12];
                             uint8_t lo = acc_packet_data[offset + 13];
-
-                            uint16_t eth_type = ((uint16_t)hi << 8) | lo;
-
+                            uint16_t eth_type = (static_cast<uint16_t>(hi) << 8) | lo;
+        
                             if (eth_type == 0x0800) {  // IPv4
                                 acc_is_ipv4[idx] = 1;
-                                
-                                // Check protocol field if we have enough data
                                 if (size >= IP_OFFSET + 10) {
                                     uint8_t protocol = acc_packet_data[offset + IP_OFFSET + 9];
-                                    
-                                    if (protocol == 1) {  // ICMP
-                                        acc_is_icmp[idx] = 1;
-                                    } else if (protocol == 6) {  // TCP
-                                        acc_is_tcp[idx] = 1;
-                                    } else if (protocol == 17) {  // UDP
-                                        acc_is_udp[idx] = 1;
-                                    }
+                                    if (protocol == 1)      acc_is_icmp[idx] = 1;
+                                    else if (protocol == 6) acc_is_tcp[idx] = 1;
+                                    else if (protocol == 17)acc_is_udp[idx] = 1;
                                 }
                             } else if (eth_type == 0x86DD) {  // IPv6
                                 acc_is_ipv6[idx] = 1;
-
-                                // Check next_header field if we have
                                 if (size >= IP_OFFSET + 40) {
                                     uint8_t next_header = acc_packet_data[offset + IP_OFFSET + 6];
-
-                                    if (next_header == 58) {  // ICMPv6
-                                        acc_is_icmp[idx] = 1;
-                                    } else if (next_header == 6) {  // TCP
-                                        acc_is_tcp[idx] = 1;
-                                    } else if (next_header == 17) {  // UDP
-                                        acc_is_udp[idx] = 1;
-                                    }
+                                    if (next_header == 58)      acc_is_icmp[idx] = 1;
+                                    else if (next_header == 6)  acc_is_tcp[idx] = 1;
+                                    else if (next_header == 17) acc_is_udp[idx] = 1;
                                 }
                             } else if (eth_type == 0x0806) {  // ARP
                                 acc_is_arp[idx] = 1;
@@ -320,38 +303,73 @@ int main(int argc, char* argv[]) {
                         }
                     });
                 }).wait_and_throw();
-                
-                // Read back the results
-                // Read back the results
+        
+                // Read back the results from SYCL buffers
                 auto host_ipv4 = buf_is_ipv4.get_host_access();
                 auto host_ipv6 = buf_is_ipv6.get_host_access();
-                auto host_arp = buf_is_arp.get_host_access();
+                auto host_arp  = buf_is_arp.get_host_access();
                 auto host_icmp = buf_is_icmp.get_host_access();
-                auto host_tcp = buf_is_tcp.get_host_access();
-                auto host_udp = buf_is_udp.get_host_access();
-                
-                // Update packet metadata and statistics
-                for (size_t i = 0; i < packet_count; i++) {
-                    packets[i].is_ipv4 = is_ipv4[i];
-                    packets[i].is_ipv6 = is_ipv6[i];
-                    packets[i].is_arp = is_arp[i];
-                    packets[i].is_icmp = is_icmp[i];
-                    packets[i].is_tcp = is_tcp[i];
-                    packets[i].is_udp = is_udp[i];
-                    
-                    // Update statistics
-                    if (is_ipv4[i]) stats.ipv4_packets++;
-                    if (is_ipv6[i]) stats.ipv6_packets++;
-                    if (is_arp[i]) stats.arp_packets++;
-                    if (is_icmp[i]) stats.icmp_packets++;
-                    if (is_tcp[i]) stats.tcp_packets++;
-                    if (is_udp[i]) stats.udp_packets++;
-                }
-                
+                auto host_tcp  = buf_is_tcp.get_host_access();
+                auto host_udp  = buf_is_udp.get_host_access();
+        
+                // Copy the protocol flags into the packet objects in parallel.
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, packet_count),
+                    [&](const tbb::blocked_range<size_t>& r) {
+                        for (size_t i = r.begin(); i != r.end(); ++i) {
+                            packets[i].is_ipv4 = host_ipv4[i];
+                            packets[i].is_ipv6 = host_ipv6[i];
+                            packets[i].is_arp  = host_arp[i];
+                            packets[i].is_icmp = host_icmp[i];
+                            packets[i].is_tcp  = host_tcp[i];
+                            packets[i].is_udp  = host_udp[i];
+                        }
+                    });
+        
+                // Use parallel_reduce to accumulate per–packet protocol statistics.
+                struct StatsAccumulator {
+                    uint64_t ipv4{0}, ipv6{0}, arp{0}, icmp{0}, tcp{0}, udp{0};
+        
+                    StatsAccumulator() = default;
+                    StatsAccumulator(StatsAccumulator& /*other*/, tbb::split) 
+                        : ipv4(0), ipv6(0), arp(0), icmp(0), tcp(0), udp(0) {}
+        
+                    void operator()(const tbb::blocked_range<size_t>& r) {
+                        for (size_t i = r.begin(); i != r.end(); ++i) {
+                            if (host_ipv4[i]) ipv4++;
+                            if (host_ipv6[i]) ipv6++;
+                            if (host_arp[i])  arp++;
+                            if (host_icmp[i]) icmp++;
+                            if (host_tcp[i])  tcp++;
+                            if (host_udp[i])  udp++;
+                        }
+                    }
+        
+                    void join(const StatsAccumulator& other) {
+                        ipv4  += other.ipv4;
+                        ipv6  += other.ipv6;
+                        arp   += other.arp;
+                        icmp  += other.icmp;
+                        tcp   += other.tcp;
+                        udp   += other.udp;
+                    }
+                };
+        
+                StatsAccumulator acc;
+                tbb::parallel_reduce(tbb::blocked_range<size_t>(0, packet_count), acc);
+        
+                // Update the global (atomic) network statistics
+                stats.ipv4_packets += acc.ipv4;
+                stats.ipv6_packets += acc.ipv6;
+                stats.arp_packets  += acc.arp;
+                stats.icmp_packets += acc.icmp;
+                stats.tcp_packets  += acc.tcp;
+                stats.udp_packets  += acc.udp;
+        
                 std::cout << "Packet inspection completed on GPU" << std::endl;
                 return packets;
             }
         };
+        
         
         // Routing node - only process IPv4 packets
         tbb::flow::function_node<std::vector<Packet>, std::vector<Packet>> routing_node{
