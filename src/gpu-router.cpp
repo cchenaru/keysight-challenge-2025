@@ -161,7 +161,7 @@ private:
 
 int main(int argc, char* argv[]) {
     // Check command line arguments
-    std::string pcap_file = "../../src/capture2.pcap";
+    std::string pcap_file = "../../src/capture3.pcap";
     if (argc > 1) {
         pcap_file = argv[1];
     }
@@ -217,8 +217,8 @@ int main(int argc, char* argv[]) {
 
                 // Create GPU buffers
                 sycl::queue gpu_queue(sycl::default_selector_v, dpc_common::exception_handler);
-                std::cout << "Selected GPU Device: " 
-                        << gpu_queue.get_device().get_info<sycl::info::device::name>() << "\n";
+                // std::cout << "Selected GPU Device: " 
+                //         << gpu_queue.get_device().get_info<sycl::info::device::name>() << "\n";
 
                 size_t packet_count = packets.size();
 
@@ -399,7 +399,6 @@ int main(int argc, char* argv[]) {
             }
         };
 
-        
         
         // Routing node - only process IPv4 packets
         tbb::flow::function_node<std::vector<Packet>, std::vector<Packet>> routing_node{
