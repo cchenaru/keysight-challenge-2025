@@ -167,6 +167,11 @@ class PCAPWriter {
             return true;
         }
     
+        // In the PCAPWriter class, add this method:
+        pcap_dumper_t* getDumper() const {
+            return dumper_;
+        }
+
         bool isOpen() const {
             return handle_ != nullptr && dumper_ != nullptr;
         }
